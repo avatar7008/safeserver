@@ -23,6 +23,8 @@ import java.util.Properties;
 import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 
 public class Safeserver implements ModInitializer {
 	private static final Logger LOGGER = LoggerFactory.getLogger(Safeserver.class);
@@ -32,6 +34,7 @@ public class Safeserver implements ModInitializer {
 	private final Map<UUID, Vec3d> playerJoinPositions = new HashMap<>();
 	private final Map<UUID, Boolean> playerWasOpped = new HashMap<>();
 	private Properties passwordProperties;
+	private String initialGameMode;
 
 	@Override
 	public void onInitialize() {
@@ -77,6 +80,7 @@ public class Safeserver implements ModInitializer {
 		UUID playerId = player.getUuid();
 		loggedInPlayers.put(playerId, false);
 		playerJoinPositions.put(playerId, player.getPos());
+		initialGameMode = checkInitialGameMode(player);
 		player.changeGameMode(GameMode.SPECTATOR);
 		LOGGER.info("Player {} joined the game.", player.getName().getString());
 
@@ -150,7 +154,8 @@ public class Safeserver implements ModInitializer {
 
 	private void setPassword(ServerPlayerEntity player, String password) {
 		String playerIdString = player.getUuid().toString();
-		passwordProperties.setProperty(playerIdString, password);
+		String hashedPassword = hashPassword(password);
+		passwordProperties.setProperty(playerIdString, hashedPassword);
 		try (FileWriter writer = new FileWriter(PASSWORD_FILE)) {
 			passwordProperties.store(writer, "Player Passwords");
 			player.sendMessage(Text.of("Password set successfully!"), false);
@@ -165,9 +170,14 @@ public class Safeserver implements ModInitializer {
 	private void login(ServerPlayerEntity player, String password) {
 		String playerIdString = player.getUuid().toString();
 		String storedPassword = passwordProperties.getProperty(playerIdString);
-		if (storedPassword != null && storedPassword.equals(password)) {
+		String hashedPassword = hashPassword(password);
+		if (storedPassword != null && storedPassword.equals(hashedPassword)) {
 			loggedInPlayers.put(player.getUuid(), true);
-			player.changeGameMode(GameMode.SURVIVAL);
+			if (initialGameMode.equals("creative")) {
+				player.changeGameMode(GameMode.CREATIVE);
+			} else {
+				player.changeGameMode(GameMode.SURVIVAL);
+			}
 			player.sendMessage(Text.of("Login successful! Enjoy playing on the server."), false);
 			LOGGER.info("Player {} logged in successfully.", player.getName().getString());
 
@@ -204,5 +214,30 @@ public class Safeserver implements ModInitializer {
 	private void teleportPlayerToJoinPosition(ServerPlayerEntity player, Vec3d joinPos) {
 		player.teleport(player.getServerWorld(), joinPos.x, joinPos.y, joinPos.z, player.getYaw(), player.getPitch());
 		player.changeGameMode(GameMode.SPECTATOR);
+	}
+
+	private String checkInitialGameMode(ServerPlayerEntity player) {
+		if (player.isCreative()) {
+			return "creative";
+		} else {
+			return "survival";
+		}
+	}
+
+	private String hashPassword(String password) {
+		try {
+			MessageDigest digest = MessageDigest.getInstance("SHA-256");
+			byte[] hash = digest.digest(password.getBytes());
+			StringBuilder hexString = new StringBuilder();
+			for (byte b : hash) {
+				String hex = Integer.toHexString(0xff & b);
+				if (hex.length() == 1) hexString.append('0');
+				hexString.append(hex);
+			}
+			return hexString.toString();
+		} catch (NoSuchAlgorithmException e) {
+			LOGGER.error("Failed to hash password", e);
+			throw new RuntimeException("Failed to hash password", e);
+		}
 	}
 }
